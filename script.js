@@ -7,11 +7,264 @@ let coursesChartInstance = null;
 Chart.defaults.color = '#94a3b8';
 Chart.defaults.font.family = "'Inter', 'sans-serif'";
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyxYLNN0sn0XUH-2A51PWsmYprdXD9XJJn30X1R2IeaZq3Ll1BUOmN9JLLDA3wqo8yM/exec';
-                      
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxF2TwmNd4nILZc7Tl0D-KNlkcOYyzh_hJfgXQLOEo5IkJ2c3Zn4sSGGW0fh3KevjYW/exec';
+
+// ================================================================
+// SISTEMA DE AUTENTICACIÓN Y ROLES
+// ================================================================
+
+// Base de datos de usuarios base (siempre disponibles, hardcoded)
+const BASE_USERS = [
+    { password: 'RB1069432843191425', name: 'Wilson Varela Muñoz',           role: 'Super Administrador' },
+    { password: 'RB53080821',         name: 'Espitia Cortes Jennifer Yolima', role: 'Administrador' },
+    { password: 'RB52850911',         name: 'Ramirez Mora Dora Yeny',         role: 'Administrador' },
+    { password: 'RB1007339915',       name: 'Laguna Leiva Valentina',          role: 'Administrador' },
+    { password: 'RB1026580615',       name: 'Campo Camacho Yenny Lizeth',      role: 'Administrador' },
+];
+
+// Clave legacy de localStorage (ya no se usa para almacenar, solo para migrar si hubiera datos)
+const EXTRA_USERS_KEY = 'rb_extra_users';
+
+// Lista de usuarios extra cargados desde el backend (se llena después del fetch)
+let apiExtraUsers = [];
+
+// Usuario actual en sesión (se lee de sessionStorage al cargar)
+let currentUser = null;
+
+/** Devuelve todos los usuarios (base + extra desde el API) */
+function getAllUsers() {
+    return [...BASE_USERS, ...apiExtraUsers];
+}
+
+/** Busca un usuario por password (case-sensitive) */
+function findUserByPassword(pw) {
+    return getAllUsers().find(u => u.password === pw) || null;
+}
+
+/** Devuelve true si el usuario actual puede ver el análisis y descargar */
+function isAuthorized() {
+    return currentUser !== null;
+}
+
+/** Aplica restricciones de UI según el rol actual */
+function applyRoleUI() {
+    const badge = document.getElementById('role-badge');
+    const btnDownload = document.getElementById('btn-download');
+    const ratingsCard = document.querySelector('[onclick="openRatingsModal()"]');
+
+    if (!currentUser) {
+        // INVITADO
+        badge.textContent = '\uD83D\uDD13 Invitado';
+        badge.style.background = 'rgba(255,255,255,0.06)';
+        badge.style.borderColor = 'rgba(255,255,255,0.15)';
+        badge.style.color = '#979799';
+        if (btnDownload) btnDownload.classList.add('hidden');
+        // Tarjeta de valoraciones: no clickeable para invitados
+        if (ratingsCard) {
+            ratingsCard.style.cursor = 'default';
+            ratingsCard.classList.remove('hover:border-[#43bff5]', 'hover:shadow-[0_0_15px_rgba(67,191,245,0.3)]', 'group');
+        }
+    } else {
+        // USUARIO AUTENTICADO
+        const roleColor = currentUser.role === 'Super Administrador'
+            ? { bg: 'rgba(123,63,206,0.25)', border: 'rgba(123,63,206,0.5)', color: '#c084fc' }
+            : { bg: 'rgba(67,191,245,0.15)', border: 'rgba(67,191,245,0.4)', color: '#43bff5' };
+
+        const shortName = currentUser.name.split(' ').slice(0, 2).join(' ');
+        badge.textContent = `\uD83D\uDD11 ${shortName} • ${currentUser.role}`;
+        badge.style.background = roleColor.bg;
+        badge.style.borderColor = roleColor.border;
+        badge.style.color = roleColor.color;
+
+        // Tarjeta de valoraciones: clickeable para usuarios autenticados
+        if (ratingsCard) {
+            ratingsCard.style.cursor = 'pointer';
+            ratingsCard.classList.add('hover:border-[#43bff5]', 'hover:shadow-[0_0_15px_rgba(67,191,245,0.3)]', 'group');
+        }
+
+        // Mostrar botón de descarga si ya se cargó la URL
+        if (btnDownload && dashboardData.kpis && dashboardData.kpis.download_url) {
+            btnDownload.href = dashboardData.kpis.download_url;
+            btnDownload.classList.remove('hidden');
+        }
+    }
+}
+
+/** Lógica del clic en el badge:
+ *  - Invitado  → abre login
+ *  - Admin / Super Admin → cierra sesión (con confirmación nativa)
+ *  - Si Super Admin, primero ofrece abrir el panel de gestión de usuarios
+ */
+function handleRoleBadgeClick() {
+    if (!currentUser) {
+        openLoginModal();
+    } else if (currentUser.role === 'Super Administrador') {
+        // Menú rápido con confirm
+        const choice = confirm(`Sesión activa: ${currentUser.name}\n\nSelecciona una opción:\n\n[Aceptar] → Abrir Gestión de Usuarios\n[Cancelar] → Cerrar Sesión`);
+        if (choice) {
+            openAddUserModal();
+        } else {
+            if (confirm('\u00bfSeguro que quieres cerrar sesión?')) logout();
+        }
+    } else {
+        if (confirm(`\u00bfDeseas cerrar la sesión de ${currentUser.name}?`)) logout();
+    }
+}
+
+function openLoginModal() {
+    document.getElementById('login-password-input').value = '';
+    document.getElementById('login-error').classList.add('hidden');
+    const m = document.getElementById('login-modal');
+    m.classList.remove('hidden');
+    m.classList.add('flex');
+    setTimeout(() => document.getElementById('login-password-input').focus(), 100);
+}
+
+function closeLoginModal() {
+    const m = document.getElementById('login-modal');
+    m.classList.add('hidden');
+    m.classList.remove('flex');
+}
+
+function attemptLogin() {
+    const pw = document.getElementById('login-password-input').value.trim();
+    const user = findUserByPassword(pw);
+    if (user) {
+        currentUser = user;
+        sessionStorage.setItem('rb_session', JSON.stringify(user));
+        closeLoginModal();
+        applyRoleUI();
+    } else {
+        document.getElementById('login-error').classList.remove('hidden');
+        document.getElementById('login-password-input').value = '';
+        document.getElementById('login-password-input').focus();
+    }
+}
+
+function logout() {
+    currentUser = null;
+    sessionStorage.removeItem('rb_session');
+    applyRoleUI();
+}
+
+// ---- Add User Modal ----
+function openAddUserModal() {
+    renderUsersList();
+    document.getElementById('new-user-name').value = '';
+    document.getElementById('new-user-password').value = '';
+    document.getElementById('new-user-role').value = 'Administrador';
+    document.getElementById('add-user-error').classList.add('hidden');
+    const m = document.getElementById('add-user-modal');
+    m.classList.remove('hidden');
+    m.classList.add('flex');
+}
+
+function closeAddUserModal() {
+    const m = document.getElementById('add-user-modal');
+    m.classList.add('hidden');
+    m.classList.remove('flex');
+}
+
+function renderUsersList() {
+    const container = document.getElementById('users-list');
+    const users = getAllUsers();
+    container.innerHTML = users.map((u, i) => {
+        const isExtra = i >= BASE_USERS.length;
+        const roleColor = u.role === 'Super Administrador' ? '#c084fc' : '#43bff5';
+        return `
+            <div class="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2 text-sm">
+                <div>
+                    <p class="font-medium text-white">${u.name}</p>
+                    <p style="color:${roleColor}" class="text-xs">${u.role}</p>
+                </div>
+                ${isExtra
+                    ? `<button onclick="removeExtraUser('${u.password.replace(/'/g, "\\'")}')"
+                         class="text-red-400 hover:text-red-300 transition-colors text-lg leading-none" title="Eliminar">&times;</button>`
+                    : '<span class="text-brand-muted text-xs">Base</span>'}
+            </div>
+        `;
+    }).join('');
+}
+
+async function removeExtraUser(password) {
+    if (!confirm('\u00bfEliminar este usuario?')) return;
+    try {
+        const res = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'remove_user', password: password })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            apiExtraUsers = data.users;
+            renderUsersList();
+        } else {
+            alert('Error al eliminar: ' + (data.error || 'desconocido'));
+        }
+    } catch(e) {
+        alert('Error de red al eliminar usuario.');
+    }
+}
+
+async function addNewUser() {
+    const name = document.getElementById('new-user-name').value.trim();
+    const password = document.getElementById('new-user-password').value.trim();
+    const role = document.getElementById('new-user-role').value;
+    const errEl = document.getElementById('add-user-error');
+
+    if (!name || !password) {
+        errEl.textContent = 'Por favor completa todos los campos.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    if (getAllUsers().find(u => u.password === password)) {
+        errEl.textContent = 'Esa contraseña ya está en uso. Elige una diferente.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    errEl.classList.add('hidden');
+
+    // Guardar en el backend (Apps Script PropertiesService)
+    try {
+        const res = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'add_user', user: { name, password, role } })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            apiExtraUsers = data.users;
+            document.getElementById('new-user-name').value = '';
+            document.getElementById('new-user-password').value = '';
+            renderUsersList();
+        } else {
+            errEl.textContent = data.error || 'No se pudo guardar el usuario.';
+            errEl.classList.remove('hidden');
+        }
+    } catch(e) {
+        errEl.textContent = 'Error de red al guardar. Intenta de nuevo.';
+        errEl.classList.remove('hidden');
+    }
+}
+
+// ================================================================
+// END SISTEMA DE AUTENTICACIÓN
+// ================================================================
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Restaurar sesión previa si existe
+    const savedSession = sessionStorage.getItem('rb_session');
+    if (savedSession) {
+        try { currentUser = JSON.parse(savedSession); } catch(e) { currentUser = null; }
+    }
+    applyRoleUI();
     fetchDashboardData();
 
+    // Cerrar modales al clicar el overlay
+    document.getElementById('login-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeLoginModal();
+    });
+    document.getElementById('add-user-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeAddUserModal();
+    });
 });
 
 async function fetchDashboardData() {
@@ -26,7 +279,6 @@ async function fetchDashboardData() {
         renderTable(dashboardData.courses);
         renderAreasTable(dashboardData.areas);
         
-        
         // Populate new Global Rating KPIs
         animateValue('kpi-avg-rating', 0, dashboardData.kpis.average_rating || 0, 2500, '', true);
         animateValue('kpi-rating-count', 0, dashboardData.kpis.ratings_count || 0, 2500, '', false);
@@ -35,12 +287,21 @@ async function fetchDashboardData() {
         // Update the last updated time from Google Sheets
         document.getElementById('last-update').innerText = dashboardData.kpis.last_updated || 'Desconocido';
 
-        // Configure download button
+        // Cargar usuarios extra desde el API
+        if (dashboardData.extra_users && Array.isArray(dashboardData.extra_users)) {
+            apiExtraUsers = dashboardData.extra_users;
+        }
+
+        // Botón de descarga: solo visible para usuarios autenticados
         const btnDownload = document.getElementById('btn-download');
         if (btnDownload && dashboardData.kpis.download_url) {
             btnDownload.href = dashboardData.kpis.download_url;
-            btnDownload.classList.remove('hidden');
+            if (isAuthorized()) btnDownload.classList.remove('hidden');
         }
+
+        // Volver a aplicar UI de roles después de cargar datos
+        // (por si el badge necesita los datos del download_url)
+        applyRoleUI();
 
         // Show online indicator
         const indicator = document.getElementById('online-indicator');
@@ -388,6 +649,8 @@ function closeModal() {
 }
 
 function openRatingsModal() {
+    // PERMISO: si es invitado, simplemente no hacer nada (sin mostrar el login)
+    if (!isAuthorized()) return;
     if (!dashboardData.kpis) return;
     
     document.getElementById('modal-avg-rating').innerHTML = `${Number(dashboardData.kpis.average_rating || 0).toFixed(1)} <svg class="w-6 h-6 text-brand-primary" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>`;
