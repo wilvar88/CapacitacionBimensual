@@ -7,7 +7,7 @@ let coursesChartInstance = null;
 Chart.defaults.color = '#94a3b8';
 Chart.defaults.font.family = "'Inter', 'sans-serif'";
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxF2TwmNd4nILZc7Tl0D-KNlkcOYyzh_hJfgXQLOEo5IkJ2c3Zn4sSGGW0fh3KevjYW/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyioM0Icddi7xn5jqwiHA8LrmY-tAqicN6CIdjfBt2O7kBRvpgbbzHxtTo2zGN1YuWn/exec';
 
 // ================================================================
 // SISTEMA DE AUTENTICACIÓN Y ROLES
@@ -283,6 +283,21 @@ async function fetchDashboardData() {
         animateValue('kpi-avg-rating', 0, dashboardData.kpis.average_rating || 0, 2500, '', true);
         animateValue('kpi-rating-count', 0, dashboardData.kpis.ratings_count || 0, 2500, '', false);
         animateValue('kpi-rating-participation', 0, dashboardData.kpis.rating_participation || 0, 2500, '%', true);
+
+        // Populate gender stats
+        const gs = dashboardData.gender_stats;
+        if (gs) {
+            animateValue('kpi-f-avg',      0, gs.femenino.avg               || 0, 2500, '', true);
+            animateValue('kpi-f-count',    0, gs.femenino.count             || 0, 2500, '', false);
+            animateValue('kpi-f-pct',      0, gs.femenino.pct               || 0, 2500, '%', true);
+            animateValue('kpi-f-enrolled', 0, gs.femenino.enrolled          || 0, 2500, '', false);
+            animateValue('kpi-f-part',     0, gs.femenino.participation_rate || 0, 2500, '%', true);
+            animateValue('kpi-m-avg',      0, gs.masculino.avg               || 0, 2500, '', true);
+            animateValue('kpi-m-count',    0, gs.masculino.count             || 0, 2500, '', false);
+            animateValue('kpi-m-pct',      0, gs.masculino.pct               || 0, 2500, '%', true);
+            animateValue('kpi-m-enrolled', 0, gs.masculino.enrolled          || 0, 2500, '', false);
+            animateValue('kpi-m-part',     0, gs.masculino.participation_rate || 0, 2500, '%', true);
+        }
         
         // Update the last updated time from Google Sheets
         document.getElementById('last-update').innerText = dashboardData.kpis.last_updated || 'Desconocido';
