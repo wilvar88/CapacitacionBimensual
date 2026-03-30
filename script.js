@@ -7,7 +7,7 @@ let coursesChartInstance = null;
 Chart.defaults.color = '#94a3b8';
 Chart.defaults.font.family = "'Inter', 'sans-serif'";
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyioM0Icddi7xn5jqwiHA8LrmY-tAqicN6CIdjfBt2O7kBRvpgbbzHxtTo2zGN1YuWn/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwQnr3LdqtwTj8Xb6LtDx8_5dUAldKnD74nVEJW8f9m-BOpoVqYxrSb7Rs8IPNNFkG_/exec';
 
 // ================================================================
 // SISTEMA DE AUTENTICACIÓN Y ROLES
