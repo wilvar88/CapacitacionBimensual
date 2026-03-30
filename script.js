@@ -1,453 +1,706 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Recaudo Bogotá - Capacitaciones</title>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="styles.css?v=2.1">
+// Lógica Principal del Dashboard
+
+let dashboardData = {};
+let coursesChartInstance = null;
+
+// Configuración visual de Chart.js para temas oscuros
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.font.family = "'Inter', 'sans-serif'";
+
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyioM0Icddi7xn5jqwiHA8LrmY-tAqicN6CIdjfBt2O7kBRvpgbbzHxtTo2zGN1YuWn/exec';
+
+// ================================================================
+// SISTEMA DE AUTENTICACIÓN Y ROLES
+// ================================================================
+
+// Base de datos de usuarios base (siempre disponibles, hardcoded)
+const BASE_USERS = [
+    { password: 'RB1069432843191425', name: 'Wilson Varela Muñoz',           role: 'Super Administrador' },
+    { password: 'RB53080821',         name: 'Espitia Cortes Jennifer Yolima', role: 'Administrador' },
+    { password: 'RB52850911',         name: 'Ramirez Mora Dora Yeny',         role: 'Administrador' },
+    { password: 'RB1007339915',       name: 'Laguna Leiva Valentina',          role: 'Administrador' },
+    { password: 'RB1026580615',       name: 'Campo Camacho Yenny Lizeth',      role: 'Administrador' },
+];
+
+// Clave legacy de localStorage (ya no se usa para almacenar, solo para migrar si hubiera datos)
+const EXTRA_USERS_KEY = 'rb_extra_users';
+
+// Lista de usuarios extra cargados desde el backend (se llena después del fetch)
+let apiExtraUsers = [];
+
+// Usuario actual en sesión (se lee de sessionStorage al cargar)
+let currentUser = null;
+
+/** Devuelve todos los usuarios (base + extra desde el API) */
+function getAllUsers() {
+    return [...BASE_USERS, ...apiExtraUsers];
+}
+
+/** Busca un usuario por password (case-sensitive) */
+function findUserByPassword(pw) {
+    return getAllUsers().find(u => u.password === pw) || null;
+}
+
+/** Devuelve true si el usuario actual puede ver el análisis y descargar */
+function isAuthorized() {
+    return currentUser !== null;
+}
+
+/** Aplica restricciones de UI según el rol actual */
+function applyRoleUI() {
+    const badge = document.getElementById('role-badge');
+    const btnDownload = document.getElementById('btn-download');
+    const ratingsCard = document.querySelector('[onclick="openRatingsModal()"]');
+
+    if (!currentUser) {
+        // INVITADO
+        badge.textContent = '\uD83D\uDD13 Invitado';
+        badge.style.background = 'rgba(255,255,255,0.06)';
+        badge.style.borderColor = 'rgba(255,255,255,0.15)';
+        badge.style.color = '#979799';
+        if (btnDownload) btnDownload.classList.add('hidden');
+        // Tarjeta de valoraciones: no clickeable para invitados
+        if (ratingsCard) {
+            ratingsCard.style.cursor = 'default';
+            ratingsCard.classList.remove('hover:border-[#43bff5]', 'hover:shadow-[0_0_15px_rgba(67,191,245,0.3)]', 'group');
+        }
+    } else {
+        // USUARIO AUTENTICADO
+        const roleColor = currentUser.role === 'Super Administrador'
+            ? { bg: 'rgba(123,63,206,0.25)', border: 'rgba(123,63,206,0.5)', color: '#c084fc' }
+            : { bg: 'rgba(67,191,245,0.15)', border: 'rgba(67,191,245,0.4)', color: '#43bff5' };
+
+        const shortName = currentUser.name.split(' ').slice(0, 2).join(' ');
+        badge.textContent = `\uD83D\uDD11 ${shortName} • ${currentUser.role}`;
+        badge.style.background = roleColor.bg;
+        badge.style.borderColor = roleColor.border;
+        badge.style.color = roleColor.color;
+
+        // Tarjeta de valoraciones: clickeable para usuarios autenticados
+        if (ratingsCard) {
+            ratingsCard.style.cursor = 'pointer';
+            ratingsCard.classList.add('hover:border-[#43bff5]', 'hover:shadow-[0_0_15px_rgba(67,191,245,0.3)]', 'group');
+        }
+
+        // Mostrar botón de descarga si ya se cargó la URL
+        if (btnDownload && dashboardData.kpis && dashboardData.kpis.download_url) {
+            btnDownload.href = dashboardData.kpis.download_url;
+            btnDownload.classList.remove('hidden');
+        }
+    }
+}
+
+/** Lógica del clic en el badge:
+ *  - Invitado  → abre login
+ *  - Admin / Super Admin → cierra sesión (con confirmación nativa)
+ *  - Si Super Admin, primero ofrece abrir el panel de gestión de usuarios
+ */
+function handleRoleBadgeClick() {
+    if (!currentUser) {
+        openLoginModal();
+    } else if (currentUser.role === 'Super Administrador') {
+        // Menú rápido con confirm
+        const choice = confirm(`Sesión activa: ${currentUser.name}\n\nSelecciona una opción:\n\n[Aceptar] → Abrir Gestión de Usuarios\n[Cancelar] → Cerrar Sesión`);
+        if (choice) {
+            openAddUserModal();
+        } else {
+            if (confirm('\u00bfSeguro que quieres cerrar sesión?')) logout();
+        }
+    } else {
+        if (confirm(`\u00bfDeseas cerrar la sesión de ${currentUser.name}?`)) logout();
+    }
+}
+
+function openLoginModal() {
+    document.getElementById('login-password-input').value = '';
+    document.getElementById('login-error').classList.add('hidden');
+    const m = document.getElementById('login-modal');
+    m.classList.remove('hidden');
+    m.classList.add('flex');
+    setTimeout(() => document.getElementById('login-password-input').focus(), 100);
+}
+
+function closeLoginModal() {
+    const m = document.getElementById('login-modal');
+    m.classList.add('hidden');
+    m.classList.remove('flex');
+}
+
+function attemptLogin() {
+    const pw = document.getElementById('login-password-input').value.trim();
+    const user = findUserByPassword(pw);
+    if (user) {
+        currentUser = user;
+        sessionStorage.setItem('rb_session', JSON.stringify(user));
+        closeLoginModal();
+        applyRoleUI();
+    } else {
+        document.getElementById('login-error').classList.remove('hidden');
+        document.getElementById('login-password-input').value = '';
+        document.getElementById('login-password-input').focus();
+    }
+}
+
+function logout() {
+    currentUser = null;
+    sessionStorage.removeItem('rb_session');
+    applyRoleUI();
+}
+
+// ---- Add User Modal ----
+function openAddUserModal() {
+    renderUsersList();
+    document.getElementById('new-user-name').value = '';
+    document.getElementById('new-user-password').value = '';
+    document.getElementById('new-user-role').value = 'Administrador';
+    document.getElementById('add-user-error').classList.add('hidden');
+    const m = document.getElementById('add-user-modal');
+    m.classList.remove('hidden');
+    m.classList.add('flex');
+}
+
+function closeAddUserModal() {
+    const m = document.getElementById('add-user-modal');
+    m.classList.add('hidden');
+    m.classList.remove('flex');
+}
+
+function renderUsersList() {
+    const container = document.getElementById('users-list');
+    const users = getAllUsers();
+    container.innerHTML = users.map((u, i) => {
+        const isExtra = i >= BASE_USERS.length;
+        const roleColor = u.role === 'Super Administrador' ? '#c084fc' : '#43bff5';
+        return `
+            <div class="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2 text-sm">
+                <div>
+                    <p class="font-medium text-white">${u.name}</p>
+                    <p style="color:${roleColor}" class="text-xs">${u.role}</p>
+                </div>
+                ${isExtra
+                    ? `<button onclick="removeExtraUser('${u.password.replace(/'/g, "\\'")}')"
+                         class="text-red-400 hover:text-red-300 transition-colors text-lg leading-none" title="Eliminar">&times;</button>`
+                    : '<span class="text-brand-muted text-xs">Base</span>'}
+            </div>
+        `;
+    }).join('');
+}
+
+async function removeExtraUser(password) {
+    if (!confirm('\u00bfEliminar este usuario?')) return;
+    try {
+        const res = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'remove_user', password: password })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            apiExtraUsers = data.users;
+            renderUsersList();
+        } else {
+            alert('Error al eliminar: ' + (data.error || 'desconocido'));
+        }
+    } catch(e) {
+        alert('Error de red al eliminar usuario.');
+    }
+}
+
+async function addNewUser() {
+    const name = document.getElementById('new-user-name').value.trim();
+    const password = document.getElementById('new-user-password').value.trim();
+    const role = document.getElementById('new-user-role').value;
+    const errEl = document.getElementById('add-user-error');
+
+    if (!name || !password) {
+        errEl.textContent = 'Por favor completa todos los campos.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    if (getAllUsers().find(u => u.password === password)) {
+        errEl.textContent = 'Esa contraseña ya está en uso. Elige una diferente.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    errEl.classList.add('hidden');
+
+    // Guardar en el backend (Apps Script PropertiesService)
+    try {
+        const res = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'add_user', user: { name, password, role } })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            apiExtraUsers = data.users;
+            document.getElementById('new-user-name').value = '';
+            document.getElementById('new-user-password').value = '';
+            renderUsersList();
+        } else {
+            errEl.textContent = data.error || 'No se pudo guardar el usuario.';
+            errEl.classList.remove('hidden');
+        }
+    } catch(e) {
+        errEl.textContent = 'Error de red al guardar. Intenta de nuevo.';
+        errEl.classList.remove('hidden');
+    }
+}
+
+// ================================================================
+// END SISTEMA DE AUTENTICACIÓN
+// ================================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Restaurar sesión previa si existe
+    const savedSession = sessionStorage.getItem('rb_session');
+    if (savedSession) {
+        try { currentUser = JSON.parse(savedSession); } catch(e) { currentUser = null; }
+    }
+    applyRoleUI();
+    fetchDashboardData();
+
+    // Cerrar modales al clicar el overlay
+    document.getElementById('login-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeLoginModal();
+    });
+    document.getElementById('add-user-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeAddUserModal();
+    });
+});
+
+async function fetchDashboardData() {
+    try {
+        const response = await fetch(API_ENDPOINT);
+        if (!response.ok) throw new Error('Error al conectar con la API');
+        
+        dashboardData = await response.json();
+        
+        updateKPIs(dashboardData.kpis);
+        renderChart(dashboardData.courses);
+        renderTable(dashboardData.courses);
+        renderAreasTable(dashboardData.areas);
+        
+        // Populate new Global Rating KPIs
+        animateValue('kpi-avg-rating', 0, dashboardData.kpis.average_rating || 0, 2500, '', true);
+        animateValue('kpi-rating-count', 0, dashboardData.kpis.ratings_count || 0, 2500, '', false);
+        animateValue('kpi-rating-participation', 0, dashboardData.kpis.rating_participation || 0, 2500, '%', true);
+
+        // Populate gender stats
+        const gs = dashboardData.gender_stats;
+        if (gs) {
+            animateValue('kpi-f-avg',      0, gs.femenino.avg               || 0, 2500, '', true);
+            animateValue('kpi-f-count',    0, gs.femenino.count             || 0, 2500, '', false);
+            animateValue('kpi-f-pct',      0, gs.femenino.pct               || 0, 2500, '%', true);
+            animateValue('kpi-f-enrolled', 0, gs.femenino.enrolled          || 0, 2500, '', false);
+            animateValue('kpi-f-part',     0, gs.femenino.participation_rate || 0, 2500, '%', true);
+            animateValue('kpi-m-avg',      0, gs.masculino.avg               || 0, 2500, '', true);
+            animateValue('kpi-m-count',    0, gs.masculino.count             || 0, 2500, '', false);
+            animateValue('kpi-m-pct',      0, gs.masculino.pct               || 0, 2500, '%', true);
+            animateValue('kpi-m-enrolled', 0, gs.masculino.enrolled          || 0, 2500, '', false);
+            animateValue('kpi-m-part',     0, gs.masculino.participation_rate || 0, 2500, '%', true);
+        }
+        
+        // Update the last updated time from Google Sheets
+        document.getElementById('last-update').innerText = dashboardData.kpis.last_updated || 'Desconocido';
+
+        // Cargar usuarios extra desde el API
+        if (dashboardData.extra_users && Array.isArray(dashboardData.extra_users)) {
+            apiExtraUsers = dashboardData.extra_users;
+        }
+
+        // Botón de descarga: solo visible para usuarios autenticados
+        const btnDownload = document.getElementById('btn-download');
+        if (btnDownload && dashboardData.kpis.download_url) {
+            btnDownload.href = dashboardData.kpis.download_url;
+            if (isAuthorized()) btnDownload.classList.remove('hidden');
+        }
+
+        // Volver a aplicar UI de roles después de cargar datos
+        // (por si el badge necesita los datos del download_url)
+        applyRoleUI();
+
+        // Show online indicator
+        const indicator = document.getElementById('online-indicator');
+        if(indicator) indicator.classList.remove('hidden');
+        
+        const errorToast = document.getElementById('error-toast');
+        if(errorToast) errorToast.classList.add('hidden');
+
+    } catch (error) {
+        console.error("No se pudieron cargar los datos", error);
+        const indicator = document.getElementById('online-indicator');
+        if(indicator) indicator.classList.add('hidden');
+        
+        const errorToast = document.getElementById('error-toast');
+        if(errorToast) {
+            errorToast.classList.remove('hidden');
+            document.getElementById('error-text').innerText = `Error: ${error.message}`;
+        }
+    }
+}
+
+function animateValue(elementOrId, start, end, duration, formatStr = "", isFloat = false) {
+    let el = typeof elementOrId === 'string' ? document.getElementById(elementOrId) : elementOrId;
+    if (!el) return;
     
-    <!-- Configuración básica de colores para Tailwind -->
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                    colors: {
-                        brand: {
-                            dark: '#01326c',
-                            panel: 'transparent',
-                            primary: '#43bff5',
-                            accent: '#7fb5d8',
-                            text: '#f8fafc',
-                            muted: '#979799'
+    // If end value is undefined, null, or invalid, set it to 0
+    if (isNaN(end) || end === null || end === undefined) end = 0;
+
+    let startTimestamp = null;
+    const step = (timestamp) => {
+        if (!startTimestamp) startTimestamp = timestamp;
+        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+        const easeOut = 1 - Math.pow(1 - progress, 4); // easeOutQuart
+        let current = start + easeOut * (end - start);
+        
+        if (isFloat) {
+            el.innerText = current.toFixed(1) + formatStr;
+        } else {
+            el.innerText = Math.floor(current) + formatStr;
+        }
+        
+        if (progress < 1) {
+            window.requestAnimationFrame(step);
+        } else {
+            if (isFloat) el.innerText = end.toFixed(1) + formatStr;
+            else el.innerText = end + formatStr;
+        }
+    };
+    window.requestAnimationFrame(step);
+}
+
+function updateKPIs(kpis) {
+    animateValue('kpi-participation', 0, kpis.participation_rate, 2500, '%', true);
+    animateValue('kpi-approval', 0, kpis.approval_rate, 2500, '%', true);
+    animateValue('kpi-courses', 0, kpis.total_courses, 2500, '', false);
+    animateValue('kpi-attendees', 0, kpis.total_attendees, 2500, '', false);
+    
+    if (kpis.global_started !== undefined) animateValue('kpi-part-count', 0, kpis.global_started, 2500, '', false);
+    if (kpis.global_approved !== undefined) animateValue('kpi-appr-count', 0, kpis.global_approved, 2500, '', false);
+}
+
+function renderChart(courses) {
+    const ctx = document.getElementById('coursesChart').getContext('2d');
+    
+    const labels = courses.map(c => c.name);
+    const participationData = courses.map(c => c.participation);
+    const approvalData = courses.map(c => c.approval);
+
+    if (coursesChartInstance) {
+        coursesChartInstance.destroy();
+    }
+
+    const gradientPart = ctx.createLinearGradient(0, 0, 0, 400);
+    gradientPart.addColorStop(0, '#13b8ff');
+    gradientPart.addColorStop(1, '#003e58');
+
+    const gradientAppr = ctx.createLinearGradient(0, 0, 0, 400);
+    gradientAppr.addColorStop(0, '#00ff22');
+    gradientAppr.addColorStop(1, '#01326c');
+
+    coursesChartInstance = new Chart(ctx, {
+        type: 'bar',
+        plugins: [ChartDataLabels],
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: '% Participación',
+                    data: courses.map(() => 0),
+                    backgroundColor: gradientPart,
+                    borderColor: '#43bff5',
+                    borderWidth: {top: 1, right: 0, bottom: 0, left: 0},
+                    borderRadius: 4
+                },
+                {
+                    label: '% Aprobación',
+                    data: courses.map(() => 0),
+                    backgroundColor: gradientAppr,
+                    borderColor: '#7fb5d8',
+                    borderWidth: {top: 1, right: 0, bottom: 0, left: 0},
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            layout: {
+                padding: {
+                    top: 30
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                    titleColor: '#43bff5',
+                    bodyColor: '#ffffff63',
+                    borderColor: 'rgba(255, 255, 255, 0.05)',
+                    borderWidth: 1
+                },
+                datalabels: {
+                    color: '#43bff5',
+                    anchor: 'end',
+                    align: 'top',
+                    offset: 4,
+                    font: {
+                        size: 24,
+                        weight: 'bold',
+                        family: "'Inter', sans-serif"
+                    },
+                    formatter: function(value) {
+                        return value.toFixed(1);
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 110,
+                    grid: {
+                        color: '#08aac30e',
+                        drawBorder: false
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return value <= 100 ? value + '%' : '';
                         }
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
                     }
                 }
             }
+        }
+    });
+
+    let startTime = null;
+    const duration = 2500;
+    
+    const animateChart = (timestamp) => {
+        if (!startTime) startTime = timestamp;
+        let progress = Math.min((timestamp - startTime) / duration, 1);
+        let easeOut = 1 - Math.pow(1 - progress, 4); // easeOutQuart
         
-    </script>
-</head>
-<body class="bg-brand-dark text-brand-text min-h-screen font-sans antialiased relative overflow-x-hidden">
-    <!-- Glowing Background Elements -->
-    <div class="fixed top-[-10%] left-[-10%] w-[40%] h-[50%] rounded-full bg-[#43bff5] opacity-20 blur-[120px] pointer-events-none z-0"></div>
-    <div class="fixed bottom-[-10%] right-[-10%] w-[40%] h-[50%] rounded-full bg-[#7fb5d8] opacity-20 blur-[120px] pointer-events-none z-0"></div>
-    <div class="fixed top-[30%] left-[30%] w-[40%] h-[40%] rounded-full bg-[#01326c] opacity-50 blur-[100px] pointer-events-none z-0"></div>
-
-    <!-- Navbar -->
-    <nav class="glass-panel border-b border-white/10 p-4 shadow-xl flex items-center justify-between z-10 relative">
-        <div class="flex items-center space-x-3">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#01326c] to-[#43bff5] flex items-center justify-center font-bold text-xl shadow-[0_0_10px_rgba(67,191,245,0.5)] text-white">
-                RB
-            </div>
-            <div>
-                <h1 class="text-xl font-bold tracking-tight text-white drop-shadow-[0_0_2px_rgba(255,255,255,0.5)]">RECAUDO BOGOTÁ</h1>
-                <button id="role-badge" onclick="handleRoleBadgeClick()" class="text-xs font-semibold mt-0.5 px-2.5 py-0.5 rounded-full border transition-all cursor-pointer hover:scale-105 active:scale-95"
-                    style="background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.15); color: #979799;">
-                    🔓 Invitado
-                </button>
-            </div>
-        </div>
-        <div class="flex items-center text-sm text-brand-muted bg-black/20 px-3 py-1.5 rounded-full border border-white/5">
-            <span class="mr-2">Última actualización:</span>
-            <span id="last-update" class="font-semibold text-brand-accent">Cargando...</span>
-        </div>
-    </nav>
-
-    <!-- Main Container -->
-    <main class="p-6 max-w-7xl mx-auto space-y-6 relative z-10">
+        coursesChartInstance.data.datasets[0].data = participationData.map(v => v * easeOut);
+        coursesChartInstance.data.datasets[1].data = approvalData.map(v => v * easeOut);
         
-        <!-- Header Section -->
-        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-2">
-            <div>
-                <h2 class="text-3xl font-semibold mb-2">Visión General de Capacitaciones</h2>
-                <p class="text-brand-muted">Métricas clave calculadas a partir de asistentes inscritos y finalizados.</p>
-            </div>
-            <a id="btn-download" href="#" class="hidden glass-panel px-5 py-2.5 mt-4 sm:mt-0 hover:bg-white/10 transition-all flex items-center space-x-2 text-[#43bff5] font-bold text-sm shadow-[0_0_15px_rgba(67,191,245,0.2)]">
-                <svg class="w-5 h-5 drop-shadow-[0_0_8px_rgba(67,191,245,0.8)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                <span class="drop-shadow-[0_0_8px_rgba(67,191,245,0.5)]">Exportar (.xlsx)</span>
-            </a>
-        </div>
+        coursesChartInstance.update('none');
+        
+        if (progress < 1) {
+            window.requestAnimationFrame(animateChart);
+        } else {
+            coursesChartInstance.data.datasets[0].data = participationData;
+            coursesChartInstance.data.datasets[1].data = approvalData;
+            coursesChartInstance.update('none');
+        }
+    };
+    window.requestAnimationFrame(animateChart);
+}
 
-        <!-- KPI Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <!-- Participación KPI -->
-            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between relative overflow-hidden">
-                <div class="flex justify-between items-start">
-                    <h3 class="text-brand-muted text-sm font-medium uppercase tracking-wider">Participación Global</h3>
-                    <svg class="w-6 h-6 text-[#43bff5] drop-shadow-[0_0_8px_rgba(67,191,245,0.8)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-                </div>
-                <div class="mt-4">
-                    <span id="kpi-participation" class="text-4xl font-bold text-white leading-none">--%</span>
-                    <p class="text-xs text-brand-muted mt-2">Asistentes / Inscritos</p>
-                </div>
-                <div class="absolute bottom-4 right-6 text-4xl font-black text-[#43bff5] drop-shadow-[0_0_12px_rgba(67,191,245,0.8)] z-10" id="kpi-part-count"></div>
-            </div>
+function renderTable(courses) {
+    const tbody = document.getElementById('table-body');
+    tbody.innerHTML = '';
 
-            <!-- Aprobación KPI -->
-            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between relative overflow-hidden">
-                <div class="flex justify-between items-start">
-                    <h3 class="text-brand-muted text-sm font-medium uppercase tracking-wider">Aprobación Global</h3>
-                    <svg class="w-6 h-6 text-[#7fb5d8] drop-shadow-[0_0_8px_rgba(127,181,216,0.8)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                </div>
-                <div class="mt-4">
-                    <span id="kpi-approval" class="text-4xl font-bold text-white leading-none">--%</span>
-                    <p class="text-xs text-brand-muted mt-2">Aprobados / Inscritos</p>
-                </div>
-                <div class="absolute bottom-4 right-6 text-4xl font-black text-[#43bff5] drop-shadow-[0_0_12px_rgba(67,191,245,0.8)] z-10" id="kpi-appr-count"></div>
-            </div>
+    if (courses.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="px-6 py-4 text-center text-brand-muted">No se encontraron cursos.</td></tr>`;
+        return;
+    }
 
-            <!-- Total Courses KPI -->
-            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between">
-                <div class="flex justify-between items-start">
-                    <h3 class="text-brand-muted text-sm font-medium uppercase tracking-wider">Total Cursos</h3>
-                    <svg class="w-6 h-6 text-[#43bff5] drop-shadow-[0_0_6px_rgba(67,191,245,0.6)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+    courses.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-gray-800/30 transition-colors course-row";
+        tr.dataset.name = c.name.toLowerCase();
+        
+        tr.innerHTML = `
+            <td class="px-6 py-4 font-medium text-white">${c.name}</td>
+            <td class="px-6 py-4 text-center text-gray-300 font-medium table-number-int" data-val="${c.enrolled}">0</td>
+            <td class="px-6 py-4">
+                <div class="flex flex-col">
+                    <span class="text-right font-bold text-[#43bff5] table-number-float" data-val="${c.participation}">0.0%</span>
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill participation-fill" style="width: 0%" data-target-width="${c.participation}%"></div>
+                    </div>
                 </div>
-                <div class="mt-4">
-                    <span id="kpi-courses" class="text-4xl font-bold text-white leading-none">--</span>
-                    <p class="text-xs text-brand-muted mt-2">En el período actual</p>
+            </td>
+            <td class="px-6 py-4">
+                <div class="flex flex-col">
+                    <span class="text-right font-bold text-[#7fb5d8] table-number-float" data-val="${c.approval}">0.0%</span>
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill approval-fill" style="width: 0%" data-target-width="${c.approval}%"></div>
+                    </div>
                 </div>
-            </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
 
-            <!-- Total Attendees KPI -->
-            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between">
-                <div class="flex justify-between items-start">
-                    <h3 class="text-brand-muted text-sm font-medium uppercase tracking-wider">Colaboradores</h3>
-                    <svg class="w-6 h-6 text-[#7fb5d8] drop-shadow-[0_0_6px_rgba(127,181,216,0.6)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                </div>
-                <div class="mt-4">
-                    <span id="kpi-attendees" class="text-4xl font-bold text-white leading-none">--</span>
-                    <p class="text-xs text-brand-muted mt-2">Impactados globalmente</p>
-                </div>
-            </div>
-        </div>
+    const intElems = tbody.querySelectorAll('.table-number-int');
+    intElems.forEach(el => animateValue(el, 0, parseFloat(el.getAttribute('data-val')), 2500, '', false));
+    
+    const floatElems = tbody.querySelectorAll('.table-number-float');
+    floatElems.forEach(el => animateValue(el, 0, parseFloat(el.getAttribute('data-val')), 2500, '%', true));
 
-        <!-- Charts and Tables Area -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    // Animar barras de progreso usando requestAnimationFrame
+    setTimeout(() => {
+        const fills = document.querySelectorAll('#table-body .table-progress-fill');
+        fills.forEach(fill => {
+            fill.style.width = fill.getAttribute('data-target-width');
+        });
+    }, 100);
+}
+
+
+function renderAreasTable(areas) {
+    const tbody = document.getElementById('areas-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (!areas || areas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="px-6 py-4 text-center text-brand-muted">No se encontraron áreas.</td></tr>`;
+        return;
+    }
+
+    areas.forEach((a, index) => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-gray-800/30 transition-colors cursor-pointer group";
+        tr.onclick = () => openModal(index);
+        
+        tr.innerHTML = `
+            <td class="px-6 py-4 font-medium text-white group-hover:text-brand-primary transition-colors flex items-center space-x-2">
+                <svg class="w-4 h-4 text-brand-muted group-hover:text-brand-primary transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                <span>${a.name}</span>
+            </td>
+            <td class="px-6 py-4 text-center text-gray-300 font-medium area-number-int" data-val="${a.enrolled}">0</td>
+            <td class="px-6 py-4">
+                <div class="flex flex-col">
+                    <span class="text-right font-bold text-[#43bff5] area-number-float" data-val="${a.participation}">0.0%</span>
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill participation-fill" style="width: 0%" data-target-width="${a.participation}%"></div>
+                    </div>
+                </div>
+            </td>
+            <td class="px-6 py-4">
+                <div class="flex flex-col">
+                    <span class="text-right font-bold text-[#7fb5d8] area-number-float" data-val="${a.approval}">0.0%</span>
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill approval-fill" style="width: 0%" data-target-width="${a.approval}%"></div>
+                    </div>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    const intAreaElems = tbody.querySelectorAll('.area-number-int');
+    intAreaElems.forEach(el => animateValue(el, 0, parseFloat(el.getAttribute('data-val')), 2500, '', false));
+    
+    const floatAreaElems = tbody.querySelectorAll('.area-number-float');
+    floatAreaElems.forEach(el => animateValue(el, 0, parseFloat(el.getAttribute('data-val')), 2500, '%', true));
+
+    setTimeout(() => {
+        const areaFills = document.querySelectorAll('#areas-table-body .table-progress-fill');
+        areaFills.forEach(fill => {
+            if (fill.hasAttribute('data-target-width')) {
+                fill.style.width = fill.getAttribute('data-target-width');
+            }
+        });
+    }, 100);
+}
+
+function openModal(areaIndex) {
+    const area = dashboardData.areas[areaIndex];
+    document.getElementById('modal-title').innerText = `Participantes: ${area.name}`;
+    
+    const tbody = document.getElementById('modal-tbody');
+    tbody.innerHTML = '';
+    
+    if (!area.participants || area.participants.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" class="px-6 py-4 text-center text-brand-muted">No hay participantes registrados.</td></tr>`;
+    } else {
+        area.participants.forEach(p => {
+            let s = (p.status || '').toString().trim().toLowerCase();
+            let statusColor = 'text-[#979799]'; // default
             
-            <!-- Bar Chart (Takes up 2 columns on wide screens) -->
-            <div class="glass-panel p-6 rounded-xl lg:col-span-2 flex flex-col">
-                <h3 class="text-lg font-medium mb-4">Comparativa por Curso (% Participación vs % Aprobación)</h3>
-                <div class="flex-grow relative h-64 sm:h-80 w-full">
-                    <canvas id="coursesChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Valoración Global Panel (Takes up 1 column) -->
-            <div class="glass-panel p-4 rounded-xl flex flex-col justify-center cursor-pointer hover:border-[#43bff5] hover:shadow-[0_0_15px_rgba(67,191,245,0.3)] transition-all group" onclick="openRatingsModal()" style="min-height: 0;">
-                <div class="flex justify-between items-start mb-3">
-                    <h3 class="text-base font-medium text-yellow-400 group-hover:text-yellow-300 transition-colors">Calificación del Curso (Valoraciones)</h3>
-                    <svg class="w-4 h-4 text-brand-muted group-hover:text-[#43bff5] transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                </div>
-                <div class="space-y-2">
-                    <div class="flex items-center justify-between pb-2 border-b border-gray-700/50">
-                        <span class="text-xs font-medium text-brand-muted">Promedio de Valoración</span>
-                        <div class="flex items-center bg-white/5 border border-white/10 rounded-lg px-2 py-0.5 shadow-inner">
-                            <span id="kpi-avg-rating" class="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-brand-accent to-brand-primary">-.--</span>
-                            <svg class="w-5 h-5 text-brand-primary ml-1 drop-shadow-[0_0_6px_rgba(67,191,245,0.8)]" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
-                        </div>
-                    </div>
-                    <div class="flex items-center justify-between pb-2 border-b border-gray-700/50">
-                        <span class="text-xs font-medium text-brand-muted">Cantidad de Valoraciones</span>
-                        <span id="kpi-rating-count" class="text-xl font-bold text-white">--</span>
-                    </div>
-                    <div class="flex items-center justify-between pb-3 border-b border-gray-700/50">
-                        <span class="text-xs font-medium text-brand-muted">% Valoración vs Inscritos</span>
-                        <span id="kpi-rating-participation" class="text-xl font-bold text-blue-400">--%</span>
-                    </div>
-
-                    <!-- Gender breakdown -->
-                    <div class="grid grid-cols-2 gap-2 pt-1">
-                        <!-- Femenino -->
-                        <div class="bg-pink-900/15 border border-pink-500/20 rounded-xl p-2.5">
-                            <div class="flex items-center gap-1.5 mb-2">
-                                <span class="text-lg">&#9792;&#65039;</span>
-                                <span class="text-xs font-bold text-pink-300">Femenino</span>
-                            </div>
-                            <div class="space-y-1">
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">Valoración</span>
-                                    <span id="kpi-f-avg" class="text-sm font-bold text-pink-300">-.--</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">Cant. Val.</span>
-                                    <span id="kpi-f-count" class="text-sm font-bold text-white">--</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">% Val.</span>
-                                    <span id="kpi-f-pct" class="text-sm font-bold text-pink-400">--%</span>
-                                </div>
-                                <div class="flex justify-between items-center border-t border-pink-500/10 pt-1 mt-1">
-                                    <span class="text-[10px] text-brand-muted">Inscritas</span>
-                                    <span id="kpi-f-enrolled" class="text-sm font-bold text-white">--</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">% Part.</span>
-                                    <span id="kpi-f-part" class="text-sm font-bold text-pink-200">--%</span>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- Masculino -->
-                        <div class="bg-blue-900/15 border border-blue-500/20 rounded-xl p-2.5">
-                            <div class="flex items-center gap-1.5 mb-2">
-                                <span class="text-lg">&#9794;&#65039;</span>
-                                <span class="text-xs font-bold text-blue-300">Masculino</span>
-                            </div>
-                            <div class="space-y-1">
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">Valoración</span>
-                                    <span id="kpi-m-avg" class="text-sm font-bold text-blue-300">-.--</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">Cant. Val.</span>
-                                    <span id="kpi-m-count" class="text-sm font-bold text-white">--</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">% Val.</span>
-                                    <span id="kpi-m-pct" class="text-sm font-bold text-blue-400">--%</span>
-                                </div>
-                                <div class="flex justify-between items-center border-t border-blue-500/10 pt-1 mt-1">
-                                    <span class="text-[10px] text-brand-muted">Inscritos</span>
-                                    <span id="kpi-m-enrolled" class="text-sm font-bold text-white">--</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span class="text-[10px] text-brand-muted">% Part.</span>
-                                    <span id="kpi-m-part" class="text-sm font-bold text-blue-200">--%</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            if (s === 'aprobado' || s === 'aprobados') {
+                statusColor = 'text-[#21ed13] font-bold drop-shadow-[0_0_6px_rgba(33,237,19,0.5)]';
+            } else if (s === 'reprobado' || s === 'reprobados') {
+                statusColor = 'text-red-400 font-medium';
+            } else if (s === 'finalizado' || s === 'finalizados') {
+                statusColor = 'text-[#43bff5] font-medium';
+            } else if (s === 'inscrito' || s === 'inscritos') {
+                statusColor = 'text-yellow-400 font-medium';
+            } else if (s === 'en curso' || s === 'en_curso') {
+                statusColor = 'text-[#7fb5d8] font-medium';
+            }
             
-        </div>
+            const tr = document.createElement('tr');
+            tr.className = "hover:bg-white/5 transition-colors";
+            tr.innerHTML = `
+                <td class="px-6 py-3 font-medium text-white">${p.name}</td>
+                <td class="px-6 py-3 text-[#7fb5d8]">${p.course}</td>
+                <td class="px-6 py-3 ${statusColor}">${p.status || 'Sin Estado'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+    
+    const modal = document.getElementById('participants-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
 
-        <!-- Data Table -->
-        <div class="glass-panel rounded-xl overflow-hidden mt-6 mb-8">
-            <div class="p-6 border-b border-gray-700 flex justify-between items-center">
-                <h3 class="text-lg font-medium">Detalle de Ejecuciones de Cursos</h3>
-            </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm whitespace-nowrap">
-                    <thead class="bg-black/20 text-brand-accent uppercase tracking-wider">
-                        <tr>
-                            <th scope="col" class="px-6 py-4">Nombre del Curso</th>
-                            <th scope="col" class="px-6 py-4 text-center">Inscritos</th>
-                            <th scope="col" class="px-6 py-4 text-center">% Participación</th>
-                            <th scope="col" class="px-6 py-4 text-center">% Aprobación</th>
-                        </tr>
-                    </thead>
-                    <tbody id="table-body" class="divide-y divide-gray-700/50">
-                        <!-- Table rows generated by JS -->
-                        <tr>
-                            <td colspan="4" class="px-6 py-8 text-center text-brand-muted">Cargando datos...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
+function closeModal() {
+    const modal = document.getElementById('participants-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
 
-        <!-- Data Table Areas -->
-        <div class="glass-panel rounded-xl overflow-hidden mt-6 mb-8">
-            <div class="p-6 border-b border-gray-700 flex justify-between items-center">
-                <h3 class="text-lg font-medium">Desempeño por Área (Clic para ver participantes)</h3>
-            </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm whitespace-nowrap">
-                    <thead class="bg-black/20 text-brand-accent uppercase tracking-wider">
-                        <tr>
-                            <th scope="col" class="px-6 py-4">Nombre del Área</th>
-                            <th scope="col" class="px-6 py-4 text-center">Inscritos</th>
-                            <th scope="col" class="px-6 py-4 text-center">% Participación</th>
-                            <th scope="col" class="px-6 py-4 text-center">% Aprobación</th>
-                        </tr>
-                    </thead>
-                    <tbody id="areas-table-body" class="divide-y divide-gray-700/50">
-                        <tr>
-                            <td colspan="4" class="px-6 py-8 text-center text-brand-muted">Cargando datos...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
+function openRatingsModal() {
+    // PERMISO: si es invitado, simplemente no hacer nada (sin mostrar el login)
+    if (!isAuthorized()) return;
+    if (!dashboardData.kpis) return;
+    
+    document.getElementById('modal-avg-rating').innerHTML = `${Number(dashboardData.kpis.average_rating || 0).toFixed(1)} <svg class="w-6 h-6 text-brand-primary" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>`;
+    document.getElementById('modal-rating-count').innerText = dashboardData.kpis.ratings_count || 0;
+    document.getElementById('modal-rating-participation').innerText = `${Number(dashboardData.kpis.rating_participation || 0).toFixed(1)}%`;
+    
+    if (dashboardData.ai_insights) {
+        document.getElementById('ai-positive-text').innerText = dashboardData.ai_insights.positive || "No hay comentarios positivos suficientes.";
+        document.getElementById('ai-improvement-text').innerText = dashboardData.ai_insights.improvement || "No se detectaron alertas críticas u oportunidades de mejora.";
+    }
+    
+    const modal = document.getElementById('ratings-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
 
-        <!-- Participants Modal -->
-        <div id="participants-modal" class="fixed inset-0 hidden bg-[#01326c]/40 flex-col items-center justify-center z-50 backdrop-blur-md p-4 transition-all duration-300">
-            <div class="glass-panel w-full max-w-5xl max-h-[85vh] overflow-hidden flex flex-col border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.5)]">
-                <div class="p-6 border-b border-white/5 flex justify-between items-center bg-black/20">
-                    <h3 class="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#7fb5d8] to-[#43bff5] drop-shadow-[0_0_8px_rgba(67,191,245,0.4)]" id="modal-title">Participantes del Área</h3>
-                    <button onclick="closeModal()" class="text-[#7fb5d8] hover:text-[#43bff5] hover:drop-shadow-[0_0_8px_rgba(67,191,245,0.8)] transition-all text-3xl leading-none">&times;</button>
-                </div>
-                <div class="p-0 overflow-y-auto flex-1">
-                    <table class="w-full text-left text-sm">
-                        <thead class="bg-black/40 text-[#7fb5d8] uppercase tracking-wider sticky top-0 z-10 shadow-sm backdrop-blur-xl border-b border-white/5">
-                            <tr>
-                                <th scope="col" class="px-6 py-4 font-medium">Nombre del Participante</th>
-                                <th scope="col" class="px-6 py-4 font-medium">Curso</th>
-                                <th scope="col" class="px-6 py-4 font-medium">Estado</th>
-                            </tr>
-                        </thead>
-                        <tbody id="modal-tbody" class="divide-y divide-white/5 bg-transparent">
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+function closeRatingsModal() {
+    const modal = document.getElementById('ratings-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
 
-        <!-- Ratings Modal -->
-        <div id="ratings-modal" class="fixed inset-0 hidden bg-[#01326c]/40 flex-col items-center justify-center z-50 backdrop-blur-md p-4 transition-all duration-300">
-            <div class="glass-panel w-full max-w-[90vw] xl:max-w-7xl max-h-[90vh] overflow-hidden flex flex-col border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.5)]">
-                <div class="p-6 border-b border-white/5 flex justify-between items-center bg-black/20">
-                    <h3 class="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-yellow-200 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)]">Análisis de Valoraciones y Comentarios</h3>
-                    <button onclick="closeRatingsModal()" class="text-brand-muted hover:text-white transition-all text-4xl leading-none">&times;</button>
-                </div>
-                <div class="p-8 overflow-y-auto flex-1 space-y-8">
-                    <!-- Global Rating Stats -->
-                    <div class="grid grid-cols-3 gap-6 border-b border-gray-700/50 pb-8">
-                        <div class="text-center">
-                            <p class="text-sm text-brand-muted mb-2 uppercase tracking-wider font-semibold">Promedio global</p>
-                            <p class="text-4xl font-bold text-white flex items-center justify-center gap-2" id="modal-avg-rating">-.-- </p>
-                        </div>
-                        <div class="text-center border-l border-white/10">
-                            <p class="text-sm text-brand-muted mb-2 uppercase tracking-wider font-semibold">Valoraciones Totales</p>
-                            <p class="text-4xl font-bold text-white" id="modal-rating-count">--</p>
-                        </div>
-                        <div class="text-center border-l border-white/10">
-                            <p class="text-sm text-brand-muted mb-2 uppercase tracking-wider font-semibold">% vs Participación</p>
-                            <p class="text-4xl font-bold text-[#43bff5]" id="modal-rating-participation">--%</p>
-                        </div>
-                    </div>
-                    
-                    <!-- AI Insights -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <!-- Positive -->
-                        <div class="bg-green-900/10 border border-green-500/20 rounded-2xl p-6 shadow-inner h-full">
-                            <h4 class="text-green-400 font-bold mb-5 flex items-center gap-3 text-xl drop-shadow-[0_0_5px_rgba(74,222,128,0.5)] border-b border-green-500/20 pb-3">
-                                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"></path></svg>
-                                Puntos Fuertes y Logros
-                            </h4>
-                            <p class="text-base md:text-lg text-gray-200 leading-relaxed font-light whitespace-pre-wrap" id="ai-positive-text">Cargando análisis...</p>
-                        </div>
-                        
-                        <!-- Improvement -->
-                        <div class="bg-red-900/10 border border-red-500/20 rounded-2xl p-6 shadow-inner h-full">
-                            <h4 class="text-red-400 font-bold mb-5 flex items-center gap-3 text-xl drop-shadow-[0_0_5px_rgba(248,113,113,0.5)] border-b border-red-500/20 pb-3">
-                                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                                Oportunidades de Mejora
-                            </h4>
-                            <p class="text-base md:text-lg text-gray-200 leading-relaxed font-light whitespace-pre-wrap" id="ai-improvement-text">Cargando análisis...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Footer -->
-        <footer class="mt-4 pt-4 mb-2 text-center text-sm font-medium text-gray-500">
-            Esta página pertenece a Wilson Varela &copy; con todos los derechos reservados.
-        </footer>
-
-    </main>
-
-    <!-- ============================================================ -->
-    <!-- LOGIN MODAL -->
-    <!-- ============================================================ -->
-    <div id="login-modal" class="fixed inset-0 hidden bg-[#01326c]/50 flex-col items-center justify-center z-[60] backdrop-blur-md p-4">
-        <div class="glass-panel w-full max-w-sm border border-white/10 shadow-[0_0_50px_rgba(67,191,245,0.15)]" style="border-radius:1rem; overflow:hidden;">
-            <div class="p-6 border-b border-white/5 flex justify-between items-center bg-black/20">
-                <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-full bg-gradient-to-br from-[#01326c] to-[#43bff5] flex items-center justify-center shadow-[0_0_10px_rgba(67,191,245,0.4)]">
-                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-white">Acceso Autorizado</h3>
-                </div>
-                <button onclick="closeLoginModal()" class="text-brand-muted hover:text-white transition-all text-3xl leading-none">&times;</button>
-            </div>
-            <div class="p-6 space-y-4">
-                <p class="text-sm text-brand-muted text-center">Ingresa tu contraseña de acceso para habilitar funciones adicionales.</p>
-                <div class="relative">
-                    <input id="login-password-input" type="password" placeholder="Contraseña"
-                        class="w-full border rounded-lg px-4 py-3 placeholder-gray-500 focus:outline-none focus:ring-1 transition-all text-sm"
-                        style="background-color: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); color: #ffffff;"
-                        onkeydown="if(event.key==='Enter') attemptLogin()">
-                </div>
-                <div id="login-error" class="hidden text-red-400 text-xs text-center font-medium bg-red-900/20 border border-red-500/20 rounded-lg px-3 py-2">
-                    ❌ Contraseña incorrecta. Intenta de nuevo.
-                </div>
-                <button onclick="attemptLogin()"
-                    class="w-full py-3 rounded-lg font-bold text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-                    style="background: linear-gradient(135deg, #01326c, #43bff5); color: white; box-shadow: 0 0 20px rgba(67,191,245,0.3);">
-                    Ingresar
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ============================================================ -->
-    <!-- ADD USER MODAL (Super Admin only) -->
-    <!-- ============================================================ -->
-    <div id="add-user-modal" class="fixed inset-0 hidden bg-[#01326c]/50 flex-col items-center justify-center z-[60] backdrop-blur-md p-4">
-        <div class="glass-panel w-full max-w-md border border-white/10 shadow-[0_0_50px_rgba(67,191,245,0.15)]" style="border-radius:1rem; overflow:hidden;">
-            <div class="p-6 border-b border-white/5 flex justify-between items-center bg-black/20">
-                <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-full flex items-center justify-center shadow-[0_0_10px_rgba(67,191,245,0.4)]" style="background: linear-gradient(135deg, #7b3fce, #43bff5);">
-                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg>
-                    </div>
-                    <h3 class="text-lg font-bold text-white">Gestión de Usuarios</h3>
-                </div>
-                <button onclick="closeAddUserModal()" class="text-brand-muted hover:text-white transition-all text-3xl leading-none">&times;</button>
-            </div>
-            <div class="p-6 space-y-5">
-                <!-- User list -->
-                <div>
-                    <h4 class="text-sm font-semibold text-brand-muted uppercase tracking-wider mb-3">Usuarios Registrados</h4>
-                    <div id="users-list" class="space-y-2 max-h-52 overflow-y-auto pr-1"></div>
-                </div>
-                <hr class="border-white/10">
-                <!-- Add new user form -->
-                <div>
-                    <h4 class="text-sm font-semibold text-brand-muted uppercase tracking-wider mb-3">Agregar Nuevo Usuario</h4>
-                    <div class="space-y-3">
-                        <input id="new-user-name" type="text" placeholder="Nombre completo"
-                            class="w-full border rounded-lg px-4 py-2.5 placeholder-gray-500 focus:outline-none transition-all text-sm"
-                            style="background-color: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); color: #ffffff;">
-                        <input id="new-user-password" type="text" placeholder="Contraseña (ej: RB12345678)"
-                            class="w-full border rounded-lg px-4 py-2.5 placeholder-gray-500 focus:outline-none transition-all text-sm"
-                            style="background-color: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); color: #ffffff;">
-                        <select id="new-user-role"
-                            class="w-full bg-[#01326c] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-[#43bff5]/60 transition-all text-sm">
-                            <option value="Administrador">Administrador</option>
-                            <option value="Super Administrador">Super Administrador</option>
-                        </select>
-                        <div id="add-user-error" class="hidden text-red-400 text-xs text-center font-medium bg-red-900/20 border border-red-500/20 rounded-lg px-3 py-2"></div>
-                        <button onclick="addNewUser()"
-                            class="w-full py-2.5 rounded-lg font-bold text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-                            style="background: linear-gradient(135deg, #7b3fce, #43bff5); color: white; box-shadow: 0 0 15px rgba(67,191,245,0.2);">
-                            ➕ Agregar Usuario
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Online Indicator -->
-    <div id="online-indicator" class="fixed bottom-6 right-6 z-50 hidden" title="Conectado a Google Sheets">
-        <span class="relative flex h-4 w-4">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-            <span class="relative inline-flex rounded-full h-4 w-4 bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)]"></span>
-        </span>
-    </div>
-
-    <!-- Error Toast -->
-    <div id="error-toast" class="fixed top-6 right-6 z-50 hidden bg-red-600/90 text-white px-6 py-3 rounded-lg shadow-lg border border-red-500 backdrop-blur-sm">
-        <span id="error-text" class="font-medium">Error de conexión</span>
-    </div>
-
-    <script src="script.js?v=2.1"></script>
-</body>
-</html>
+// Asegurar que los modales se cierren al hacer clic afuera
+document.addEventListener('DOMContentLoaded', () => {
+    const pModal = document.getElementById('participants-modal');
+    if (pModal) {
+        pModal.addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+    }
+    
+    const rModal = document.getElementById('ratings-modal');
+    if (rModal) {
+        rModal.addEventListener('click', function(e) {
+            if (e.target === this) closeRatingsModal();
+        });
+    }
+});
