@@ -16,7 +16,7 @@ const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwQnr3LdqtwTj8Xb6L
 // Base de datos de usuarios base (siempre disponibles, hardcoded)
 const BASE_USERS = [
     { password: 'RB1069432843191425', name: 'Wilson Varela Muñoz',           role: 'Super Administrador' },
-    { password: 'RB123456789',         name: 'Marleny Avila', role: 'Administrador' },
+    { password: 'RB52782882',         name: 'Marleny Avila', role: 'Administrador' },
     { password: 'RB52850911',         name: 'Ramirez Mora Dora Yeny',         role: 'Administrador' },
     { password: 'RB1007339915',       name: 'Laguna Leiva Valentina',          role: 'Administrador' },
     { password: 'RB1026580615',       name: 'Campo Camacho Yenny Lizeth',      role: 'Administrador' },
