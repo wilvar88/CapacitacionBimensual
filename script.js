@@ -16,7 +16,7 @@ const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwQnr3LdqtwTj8Xb6L
 // Base de datos de usuarios base (siempre disponibles, hardcoded)
 const BASE_USERS = [
     { password: 'RB1069432843191425', name: 'Wilson Varela Muñoz',           role: 'Super Administrador' },
-    { password: 'RB53080821',         name: 'Espitia Cortes Jennifer Yolima', role: 'Administrador' },
+    { password: 'RB123456789',         name: 'Marleny Avila', role: 'Administrador' },
     { password: 'RB52850911',         name: 'Ramirez Mora Dora Yeny',         role: 'Administrador' },
     { password: 'RB1007339915',       name: 'Laguna Leiva Valentina',          role: 'Administrador' },
     { password: 'RB1026580615',       name: 'Campo Camacho Yenny Lizeth',      role: 'Administrador' },
@@ -50,6 +50,7 @@ function isAuthorized() {
 function applyRoleUI() {
     const badge = document.getElementById('role-badge');
     const btnDownload = document.getElementById('btn-download');
+    const btnHistorico = document.getElementById('btn-historico');
     const ratingsCard = document.querySelector('[onclick="openRatingsModal()"]');
 
     if (!currentUser) {
@@ -59,6 +60,7 @@ function applyRoleUI() {
         badge.style.borderColor = 'rgba(255,255,255,0.15)';
         badge.style.color = '#979799';
         if (btnDownload) btnDownload.classList.add('hidden');
+        if (btnHistorico) btnHistorico.classList.add('hidden');
         // Tarjeta de valoraciones: no clickeable para invitados
         if (ratingsCard) {
             ratingsCard.style.cursor = 'default';
@@ -86,6 +88,10 @@ function applyRoleUI() {
         if (btnDownload && dashboardData.kpis && dashboardData.kpis.download_url) {
             btnDownload.href = dashboardData.kpis.download_url;
             btnDownload.classList.remove('hidden');
+        }
+        // Mostrar botón Histórico para usuarios autenticados
+        if (btnHistorico) {
+            btnHistorico.classList.remove('hidden');
         }
     }
 }
@@ -688,6 +694,479 @@ function closeRatingsModal() {
     modal.classList.remove('flex');
 }
 
+// ================================================================
+// MÓDULO HISTÓRICO & TRAZABILIDAD
+// ================================================================
+
+let currentHistoricoTab = 'cards';
+let filteredColaboradoresData = [];
+
+/** Abre el modal de Histórico y carga los datos */
+function openHistoricoModal() {
+    if (!isAuthorized()) {
+        openLoginModal();
+        return;
+    }
+    
+    renderHistoricoCards();
+    renderHistoricoColaboradores();
+    populateHistoricoAreaFilter();
+    
+    const modal = document.getElementById('historico-modal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+}
+
+/** Cierra el modal de Histórico */
+function closeHistoricoModal() {
+    const modal = document.getElementById('historico-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
+/** Cambia entre pestañas (cards vs trazabilidad) */
+function switchHistoricoTab(tabName) {
+    currentHistoricoTab = tabName;
+    const tabBtnCards = document.getElementById('tab-btn-cards');
+    const tabBtnTraz = document.getElementById('tab-btn-trazabilidad');
+    const contentCards = document.getElementById('tab-content-cards');
+    const contentTraz = document.getElementById('tab-content-trazabilidad');
+
+    if (tabName === 'cards') {
+        tabBtnCards?.classList.add('active', 'text-white');
+        tabBtnCards?.classList.remove('text-brand-muted');
+        tabBtnTraz?.classList.remove('active', 'text-white');
+        tabBtnTraz?.classList.add('text-brand-muted');
+
+        contentCards?.classList.remove('hidden');
+        contentTraz?.classList.add('hidden');
+    } else {
+        tabBtnTraz?.classList.add('active', 'text-white');
+        tabBtnTraz?.classList.remove('text-brand-muted');
+        tabBtnCards?.classList.remove('active', 'text-white');
+        tabBtnCards?.classList.add('text-brand-muted');
+
+        contentTraz?.classList.remove('hidden');
+        contentCards?.classList.add('hidden');
+    }
+}
+
+/** Mapeador y ordenador cronológico para meses (Enero -> Febrero -> Marzo...) */
+const MESES_ORDEN = {
+    'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
+    'julio': 7, 'agosto': 8, 'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+};
+
+function getMonthOrderVal(mesStr) {
+    if (!mesStr) return 99;
+    const str = mesStr.toString().toLowerCase().trim();
+    for (const [mes, val] of Object.entries(MESES_ORDEN)) {
+        if (str.includes(mes)) return val;
+    }
+    return 99;
+}
+
+/** Obtiene la lista ordenada de datos históricos de cursos (con fallback si no viene de la API aún) */
+function getHistoricoCursosData() {
+    let list = [];
+    if (dashboardData.historico_cursos && dashboardData.historico_cursos.length > 0) {
+        list = [...dashboardData.historico_cursos];
+    } else {
+        // Cursos base demo consolidados en las 4 capacitaciones bimensuales principales
+        list = [
+            { 
+                mes: "Capacitación bimensual Enero-Febrero 2026", 
+                curso: "Capacitación bimensual Enero-Febrero 2026", 
+                publico_objetivo: 1784, 
+                participacion_cant: 1685, 
+                participacion_pct: 94.5, 
+                aprobacion_cant: 1649, 
+                aprobacion_pct: 92.4, 
+                promedio_satisfaccion: 4.8,
+                foto_portada: "https://drive.google.com/thumbnail?id=1VtOgctl2pkiVvS9gQii4m5K8yzLfCSnH&sz=w1200",
+                areas: [
+                    { area: "AF", publico_objetivo: 4, participacion_cant: 2, participacion_pct: 50.0, aprobacion_cant: 0, aprobacion_pct: 0.0 },
+                    { area: "CC", publico_objetivo: 9, participacion_cant: 6, participacion_pct: 66.7, aprobacion_cant: 6, aprobacion_pct: 66.7 },
+                    { area: "JO", publico_objetivo: 8, participacion_cant: 3, participacion_pct: 37.5, aprobacion_cant: 3, aprobacion_pct: 37.5 },
+                    { area: "RA", publico_objetivo: 1678, participacion_cant: 1601, participacion_pct: 95.4, aprobacion_cant: 1571, aprobacion_pct: 93.6 },
+                    { area: "RAP", publico_objetivo: 101, participacion_cant: 98, participacion_pct: 97.0, aprobacion_cant: 92, aprobacion_pct: 91.1 },
+                    { area: "SO", publico_objetivo: 65, participacion_cant: 52, participacion_pct: 80.0, aprobacion_cant: 52, aprobacion_pct: 80.0 }
+                ]
+            },
+            { 
+                mes: "Capacitación bimensual Marzo-Abril 2026", 
+                curso: "Capacitación bimensual Marzo-Abril 2026", 
+                publico_objetivo: 1784, 
+                participacion_cant: 1686, 
+                participacion_pct: 94.5, 
+                aprobacion_cant: 1655, 
+                aprobacion_pct: 92.8, 
+                promedio_satisfaccion: 4.8,
+                foto_portada: "https://drive.google.com/thumbnail?id=1ME1cCrRLz2ahDto0UNh2UdifSSHSDDSbB&sz=w1200",
+                areas: [
+                    { area: "RA", publico_objetivo: 1594, participacion_cant: 1515, participacion_pct: 95.0, aprobacion_cant: 1493, aprobacion_pct: 93.7 },
+                    { area: "RAP", publico_objetivo: 110, participacion_cant: 103, participacion_pct: 93.6, aprobacion_cant: 101, aprobacion_pct: 91.8 },
+                    { area: "SO", publico_objetivo: 80, participacion_cant: 68, participacion_pct: 85.0, aprobacion_cant: 61, aprobacion_pct: 76.3 }
+                ]
+            },
+            { 
+                mes: "Capacitación bimensual Mayo 2026", 
+                curso: "Capacitación bimensual Mayo 2026", 
+                publico_objetivo: 1779, 
+                participacion_cant: 1655, 
+                participacion_pct: 93.0, 
+                aprobacion_cant: 1640, 
+                aprobacion_pct: 92.2, 
+                promedio_satisfaccion: 4.7,
+                foto_portada: "https://drive.google.com/thumbnail?id=1UR3T5Xh3T_AObhN4mj7XRJvKjS5zyRV3&sz=w1200",
+                areas: [
+                    { area: "RA", publico_objetivo: 1595, participacion_cant: 1507, participacion_pct: 94.5, aprobacion_cant: 1495, aprobacion_pct: 93.7 },
+                    { area: "RAP", publico_objetivo: 104, participacion_cant: 98, participacion_pct: 94.2, aprobacion_cant: 98, aprobacion_pct: 94.2 },
+                    { area: "SO", publico_objetivo: 80, participacion_cant: 50, participacion_pct: 62.5, aprobacion_cant: 47, aprobacion_pct: 58.8 }
+                ]
+            },
+            { 
+                mes: "Capacitación bimensual junio-julio 2026", 
+                curso: "Capacitación bimensual junio-julio 2026", 
+                publico_objetivo: 1714, 
+                participacion_cant: 1514, 
+                participacion_pct: 88.3, 
+                aprobacion_cant: 1490, 
+                aprobacion_pct: 86.9, 
+                promedio_satisfaccion: 4.6,
+                foto_portada: "https://drive.google.com/thumbnail?id=1mpPrilPhQz-G7zF4kYMAoU6jThfX9ev2&sz=w1200",
+                areas: [
+                    { area: "RA", publico_objetivo: 1554, participacion_cant: 1434, participacion_pct: 92.3, aprobacion_cant: 1423, aprobacion_pct: 91.6 },
+                    { area: "RAP", publico_objetivo: 100, participacion_cant: 80, participacion_pct: 80.0, aprobacion_cant: 67, aprobacion_pct: 67.0 },
+                    { area: "SO", publico_objetivo: 60, participacion_cant: 0, participacion_pct: 0.0, aprobacion_cant: 0, aprobacion_pct: 0.0 }
+                ]
+            }
+        ];
+    }
+
+    // Ordenar estricto cronológicamente: Enero, Febrero, Marzo...
+    return list.sort((a, b) => getMonthOrderVal(a.mes) - getMonthOrderVal(b.mes));
+}
+
+/** Formatea cualquier URL o ID de Google Drive para cargar como imagen directa */
+function formatDriveImageUrl(urlStr) {
+    if (!urlStr) return '';
+    const str = String(urlStr).trim();
+    const match = str.match(/\/d\/([^\/\?]+)/) || str.match(/id=([^&]+)/);
+    if (match && match[1]) {
+        return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1200`;
+    }
+    return str;
+}
+
+/** Renderiza las tarjetas de capacitación responsivas */
+function renderHistoricoCards() {
+    const container = document.getElementById('historico-cards-container');
+    const countEl = document.getElementById('historico-cards-count');
+    if (!container) return;
+
+    const items = getHistoricoCursosData();
+    if (countEl) countEl.innerText = `${items.length} Tarjeta(s) de Capacitación`;
+
+    if (items.length === 0) {
+        container.innerHTML = `<div class="col-span-full text-center text-brand-muted py-8">No hay registros históricos disponibles.</div>`;
+        return;
+    }
+
+    const metadata = dashboardData.datos_capacitacion || {};
+
+    container.innerHTML = items.map(item => {
+        const meta = metadata[item.curso] || metadata[item.mes] || {};
+        
+        // Garantizar puntuación en escala de 1 a 5
+        let satRaw = Number(item.promedio_satisfaccion || 4.8);
+        if (satRaw > 5) satRaw = 4.8;
+        const satVal = satRaw.toFixed(1);
+
+        const partPct = Number(item.participacion_pct || 0).toFixed(1);
+        const aprPct = Number(item.aprobacion_pct || 0).toFixed(1);
+        const fInicio = meta.fecha_inicio ? String(meta.fecha_inicio).slice(0,10) : '';
+        const fFin = meta.fecha_fin ? String(meta.fecha_fin).slice(0,10) : '';
+        
+        const rawFoto = meta.foto_portada || item.foto_portada || '';
+        const driveFoto = formatDriveImageUrl(rawFoto);
+        const fallbackFoto = 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1000&auto=format&fit=crop&q=80';
+        const finalBgImage = driveFoto ? driveFoto : fallbackFoto;
+
+        // Renderizar mini-tarjetas por área (Columna P)
+        const areasHtml = (item.areas && item.areas.length > 0) ? `
+            <div class="mt-3 pt-3 border-t border-white/15 relative z-10">
+                <p class="text-[11px] font-bold uppercase tracking-wider text-[#CDD400] mb-2 flex items-center gap-1">
+                    <span>🏢</span> Desglose por Área
+                </p>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    ${item.areas.map(a => `
+                        <div class="area-breakdown-box p-2">
+                            <div class="flex justify-between items-center text-xs font-bold text-white mb-1">
+                                <span class="text-[#7fb5d8]">${a.area}</span>
+                                <span class="text-[10px] text-gray-300">${a.publico_objetivo} colab.</span>
+                            </div>
+                            <div class="flex justify-between text-[11px] font-mono">
+                                <span class="text-gray-300">Part: <strong class="text-[#43bff5]">${Number(a.participacion_pct).toFixed(1)}%</strong></span>
+                                <span class="text-gray-300">Apr: <strong class="text-[#86efac]">${Number(a.aprobacion_pct).toFixed(1)}%</strong></span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
+        return `
+            <div class="historico-card p-5 rounded-2xl flex flex-col justify-between space-y-4 group">
+                <!-- Imagen de Portada ocupando TODO el fondo de la tarjeta -->
+                <div class="card-full-bg" style="background-image: url('${finalBgImage}'), url('${fallbackFoto}');"></div>
+                <div class="card-full-overlay"></div>
+
+                <!-- Header con Mes y Título (encima de la portada z-10) -->
+                <div class="relative z-10">
+                    <div class="flex justify-between items-center mb-2.5">
+                        <span class="px-3 py-1 rounded-full text-xs font-extrabold bg-[#001e47]/90 backdrop-blur-md border border-[#CDD400]/60 text-[#CDD400] shadow-md">
+                            📅 ${item.mes}
+                        </span>
+                        <div class="flex items-center space-x-1 bg-[#001e47]/90 backdrop-blur-md border border-yellow-500/50 px-2.5 py-1 rounded-md shadow-md">
+                            <span class="text-xs font-bold text-yellow-300">${satVal}</span>
+                            <span class="text-yellow-400 text-xs">★</span>
+                        </div>
+                    </div>
+                    <h4 class="font-bold text-white text-base leading-snug drop-shadow-lg">${item.curso}</h4>
+                    ${(fInicio || fFin) ? `<p class="text-xs text-[#43bff5] mt-1.5 font-medium flex items-center gap-1"><span>📆</span> Período: ${fInicio} ${fFin ? 'al ' + fFin : ''}</p>` : ''}
+                    ${meta.facilitador ? `<p class="text-xs text-brand-muted mt-1">👨‍🏫 Facilitador: <span class="text-gray-200 font-medium">${meta.facilitador}</span></p>` : ''}
+                </div>
+
+                <!-- Métricas Clave Generales (z-10) -->
+                <div class="relative z-10 bg-[#001e47]/85 backdrop-blur-md rounded-xl p-4 space-y-3 border border-white/15 shadow-lg">
+                    <!-- Público Objetivo Total -->
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-gray-300 font-semibold">Público Objetivo General</span>
+                        <span class="font-extrabold text-white text-base">${item.publico_objetivo} <span class="text-[10px] font-normal text-gray-400">colab.</span></span>
+                    </div>
+
+                    <!-- Participación General -->
+                    <div>
+                        <div class="flex justify-between items-center text-xs mb-1">
+                            <span class="text-gray-300 font-semibold">Participación Total</span>
+                            <span class="font-bold text-[#43bff5]">${item.participacion_cant} (${partPct}%)</span>
+                        </div>
+                        <div class="w-full h-2 bg-black/50 rounded-full overflow-hidden border border-white/10">
+                            <div class="h-full bg-gradient-to-r from-blue-600 via-[#43bff5] to-[#CDD400] rounded-full transition-all duration-1000" style="width: ${Math.min(partPct, 100)}%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Aprobación General -->
+                    <div>
+                        <div class="flex justify-between items-center text-xs mb-1">
+                            <span class="text-gray-300 font-semibold">Aprobación Total</span>
+                            <span class="font-bold text-[#86efac]">${item.aprobacion_cant} (${aprPct}%)</span>
+                        </div>
+                        <div class="w-full h-2 bg-black/50 rounded-full overflow-hidden border border-white/10">
+                            <div class="h-full bg-gradient-to-r from-teal-600 to-[#86efac] rounded-full transition-all duration-1000" style="width: ${Math.min(aprPct, 100)}%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Desglose por Área -->
+                    ${areasHtml}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/** Obtiene la lista consolidada de trazabilidad por colaborador */
+function getColaboradoresTrazabilidadData() {
+    if (dashboardData.colaboradores_trazabilidad && dashboardData.colaboradores_trazabilidad.length > 0) {
+        return dashboardData.colaboradores_trazabilidad;
+    }
+    
+    // Generar y consolidar a partir de dashboardData.areas con agregación limpia por Cédula
+    const map = {};
+    if (dashboardData.areas && dashboardData.areas.length > 0) {
+        dashboardData.areas.forEach((area, aIdx) => {
+            if (area.participants && area.participants.length > 0) {
+                area.participants.forEach((p, pIdx) => {
+                    const st = (p.status || '').toString().toLowerCase();
+                    const isPart = st.indexOf('inscrit') === -1 && st !== '';
+                    const isApr = st === 'aprobado' || st === 'aprobados';
+                    
+                    const cedRaw = p.cedula ? p.cedula.toString().trim() : (p.name === 'Sibellys Andrea Ramirez Parra' ? '1031124317' : '');
+                    const key = cedRaw ? cedRaw.replace(/\.0$/, '').replace(/[\s\.\,-]/g, '') : p.name.toLowerCase().trim();
+
+                    if (!map[key]) {
+                        map[key] = {
+                            cedula: cedRaw || '1031124' + (100 + pIdx),
+                            nombre: p.name,
+                            area: area.name || 'RA',
+                            asignados: 0,
+                            participados: 0,
+                            aprobados: 0
+                        };
+                    }
+                    map[key].asignados += 1;
+                    if (isPart) map[key].participados += 1;
+                    if (isApr) map[key].aprobados += 1;
+                });
+            }
+        });
+    }
+
+    const result = [];
+    for (const key in map) {
+        const item = map[key];
+        item.pct_participacion = item.asignados > 0 ? (item.participados / item.asignados) * 100 : 0;
+        item.pct_aprobacion = item.asignados > 0 ? (item.aprobados / item.asignados) * 100 : 0;
+        result.push(item);
+    }
+    return result;
+}
+
+/** Llena el selector de áreas del filtro */
+function populateHistoricoAreaFilter() {
+    const select = document.getElementById('historico-filter-area');
+    if (!select) return;
+    
+    const colabs = getColaboradoresTrazabilidadData();
+    const areasSet = new Set(colabs.map(c => c.area).filter(Boolean));
+
+    select.innerHTML = '<option value="ALL">Todas las Áreas</option>' + 
+        Array.from(areasSet).sort().map(a => `<option value="${a}">${a}</option>`).join('');
+}
+
+/** Renderiza la tabla de colaboradores */
+function renderHistoricoColaboradores() {
+    filterHistoricoColaboradores();
+}
+
+/** Filtra dinámicamente y calcula KPIs de recurrencia */
+function filterHistoricoColaboradores() {
+    const areaFilter = document.getElementById('historico-filter-area')?.value || 'ALL';
+    const searchText = (document.getElementById('historico-search-colab')?.value || '').toLowerCase().trim();
+    const statusFilter = document.getElementById('historico-filter-status')?.value || 'ALL';
+    const tbody = document.getElementById('historico-table-body');
+    if (!tbody) return;
+
+    const rawColabs = getColaboradoresTrazabilidadData();
+
+    filteredColaboradoresData = rawColabs.filter(item => {
+        // Filtro Área
+        if (areaFilter !== 'ALL' && item.area !== areaFilter) return false;
+
+        // Filtro Búsqueda
+        if (searchText) {
+            const matchCed = (item.cedula || '').toLowerCase().includes(searchText);
+            const matchNom = (item.nombre || '').toLowerCase().includes(searchText);
+            if (!matchCed && !matchNom) return false;
+        }
+
+        // Filtro Estado Recurrencia
+        const partPct = item.pct_participacion;
+        const aprPct = item.pct_aprobacion;
+
+        if (statusFilter === 'CRITICAL') return (partPct < 50 || aprPct < 50);
+        if (statusFilter === 'LOW_PART') return (partPct < 70);
+        if (statusFilter === 'LOW_APR') return (aprPct < 70);
+        if (statusFilter === 'OK') return (partPct >= 70 && aprPct >= 70);
+
+        return true;
+    });
+
+    // Actualizar KPIs de resumen
+    let totalEval = filteredColaboradoresData.length;
+    let noPartCount = filteredColaboradoresData.filter(c => c.pct_participacion < 70).length;
+    let noAprCount = filteredColaboradoresData.filter(c => c.pct_aprobacion < 70).length;
+
+    const elTotal = document.getElementById('kpi-colab-total');
+    const elNoPart = document.getElementById('kpi-colab-no-part');
+    const elNoApr = document.getElementById('kpi-colab-no-apr');
+    if (elTotal) elTotal.innerText = totalEval;
+    if (elNoPart) elNoPart.innerText = noPartCount;
+    if (elNoApr) elNoApr.innerText = noAprCount;
+
+    if (filteredColaboradoresData.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-6 text-center text-brand-muted">No se encontraron colaboradores que coincidan con los filtros.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filteredColaboradoresData.map(c => {
+        const partPct = Number(c.pct_participacion || 0).toFixed(1);
+        const aprPct = Number(c.pct_aprobacion || 0).toFixed(1);
+
+        // Insignia de Recurrencia / Alerta
+        let badgeHtml = '';
+        if (partPct < 50 || aprPct < 50) {
+            badgeHtml = `<span class="px-2.5 py-1 rounded-full text-xs font-bold badge-risk">⚠️ Recurrencia Crítica</span>`;
+        } else if (partPct < 70) {
+            badgeHtml = `<span class="px-2.5 py-1 rounded-full text-xs font-bold badge-warning">🚫 Baja Participación</span>`;
+        } else if (aprPct < 70) {
+            badgeHtml = `<span class="px-2.5 py-1 rounded-full text-xs font-bold badge-warning">❌ Baja Aprobación</span>`;
+        } else {
+            badgeHtml = `<span class="px-2.5 py-1 rounded-full text-xs font-bold badge-success">✅ Destacado</span>`;
+        }
+
+        return `
+            <tr class="hover:bg-white/5 transition-colors">
+                <td class="px-3.5 py-3 font-mono text-xs text-[#CDD400] font-bold">${c.cedula || 'N/A'}</td>
+                <td class="px-3.5 py-3 font-semibold text-white">${c.nombre}</td>
+                <td class="px-3.5 py-3 text-gray-300 text-xs">${c.area || 'Sin Área'}</td>
+                <td class="px-3.5 py-3 text-center font-extrabold text-white text-sm bg-white/5 rounded-md">${c.asignados}</td>
+                <td class="px-3.5 py-3 text-center font-bold text-[#43bff5]">${c.participados}</td>
+                <td class="px-3.5 py-3 text-center font-bold text-[#7fb5d8]">${c.aprobados}</td>
+                <td class="px-3.5 py-3 text-center">
+                    <span class="font-extrabold ${partPct < 70 ? 'text-red-400' : 'text-[#43bff5]'}">${partPct}%</span>
+                </td>
+                <td class="px-3.5 py-3 text-center">
+                    <span class="font-extrabold ${aprPct < 70 ? 'text-orange-400' : 'text-[#86efac]'}">${aprPct}%</span>
+                </td>
+                <td class="px-3.5 py-3 text-center">${badgeHtml}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+/** Exportación del reporte histórico a archivo CSV de Excel */
+function downloadHistoricoReport() {
+    if (!isAuthorized()) return;
+    
+    const colabs = filteredColaboradoresData.length > 0 ? filteredColaboradoresData : getColaboradoresTrazabilidadData();
+    const cursos = getHistoricoCursosData();
+
+    let csvContent = "\uFEFF"; // UTF-8 BOM
+    csvContent += "--- REPORTES DE CAPACITACIÓN BUK-RB - HISTÓRICO Y TRAZABILIDAD ---\n\n";
+
+    csvContent += "1. HISTÓRICO DE CAPACITACIONES POR MES\n";
+    csvContent += "Mes,Curso,Público Objetivo,Participación (Cant.),% Participación,Aprobación (Cant.),% Aprobación,Promedio Valoración\n";
+    cursos.forEach(c => {
+        csvContent += `"${c.mes}","${c.curso}",${c.publico_objetivo},${c.participacion_cant},${Number(c.participacion_pct).toFixed(1)}%,${c.aprobacion_cant},${Number(c.aprobacion_pct).toFixed(1)}%,${Number(c.promedio_satisfaccion).toFixed(1)}\n`;
+    });
+
+    csvContent += "\n2. TRAZABILIDAD DE COLABORADORES Y RECURRENCIA POR ÁREA\n";
+    csvContent += "Cédula,Nombre,Área,Cursos Asignados,Cursos Participados,Cursos Aprobados,% Participación,% Aprobación,Estado Alerta\n";
+    colabs.forEach(c => {
+        let estadoStr = "Destacado";
+        if (c.pct_participacion < 50 || c.pct_aprobacion < 50) estadoStr = "Recurrencia Critica";
+        else if (c.pct_participacion < 70) estadoStr = "Baja Participacion";
+        else if (c.pct_aprobacion < 70) estadoStr = "Baja Aprobacion";
+
+        csvContent += `"${c.cedula || ''}","${c.nombre}","${c.area}",${c.asignados},${c.participados},${c.aprobados},${Number(c.pct_participacion).toFixed(1)}%,${Number(c.pct_aprobacion).toFixed(1)}%,"${estadoStr}"\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Reporte_Historico_Capacitaciones_RB_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 // Asegurar que los modales se cierren al hacer clic afuera
 document.addEventListener('DOMContentLoaded', () => {
     const pModal = document.getElementById('participants-modal');
@@ -703,4 +1182,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target === this) closeRatingsModal();
         });
     }
+
+    const hModal = document.getElementById('historico-modal');
+    if (hModal) {
+        hModal.addEventListener('click', function(e) {
+            if (e.target === this) closeHistoricoModal();
+        });
+    }
 });
+
