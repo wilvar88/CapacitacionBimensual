@@ -4,29 +4,32 @@
    Light Steel Blue: #7fb5d8
    Vibrant Sky Blue: #43bff5
    Sophisticated Cool Gray: #979799
+   Brand Deep Navy: #001e47
+   Brand Accent Lime/Yellow: #CDD400
 */
 
 body {
     background-color: #01326c;
+    background-image: radial-gradient(circle at 50% 0%, #001e47 0%, #01326c 70%);
 }
 
 /* Glass Panels */
 .glass-panel {
-    background: linear-gradient(135deg, #ffffff14 0%, #151a1d78 100%);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(0, 30, 71, 0.6) 100%);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    border: 1px solid #7fb5d833;
-    border-top: 1px solid #7fb5d866;
-    border-left: 1px solid #7fb5d866;
-    box-shadow: 0 8px 15px 0 #01326c99, inset 0 1px 0 0 #ffffff1a;
-    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.3s ease;
-    border-radius: 12px;
+    border: 1px solid rgba(205, 212, 0, 0.22);
+    border-top: 1px solid rgba(127, 181, 216, 0.4);
+    border-left: 1px solid rgba(205, 212, 0, 0.3);
+    box-shadow: 0 8px 25px 0 rgba(0, 30, 71, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+    border-radius: 14px;
 }
 
 .glass-panel:hover {
     transform: translateY(-2px);
-    box-shadow: 0 12px 40px -4px rgba(67, 191, 245, 0.2), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(67, 191, 245, 0.4);
+    box-shadow: 0 12px 40px -4px rgba(67, 191, 245, 0.25), inset 0 1px 0 0 rgba(205, 212, 0, 0.3);
+    border-color: rgba(205, 212, 0, 0.45);
 }
 
 /* Custom Scrollbar */
@@ -36,16 +39,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-    background: rgba(1, 50, 108, 0.3);
+    background: rgba(0, 30, 71, 0.4);
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(127, 181, 216, 0.3);
+    background: rgba(127, 181, 216, 0.35);
     border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(67, 191, 245, 0.6);
+    background: rgba(205, 212, 0, 0.6);
 }
 
 /* Progress bar approximations - Glass Tubes */
@@ -62,22 +65,130 @@ body {
     height: 100%;
     border-radius: 9999px;
     transition: width 2.5s ease-out;
-    box-shadow: inset 0 3px 5px rgba(255, 255, 255, 0.4), inset 0 -1px 3px rgba(0, 0, 0, 0.2), 0 0 12px rgba(67, 191, 245, 0.4);
+    box-shadow: inset 0 3px 5px rgba(255, 255, 255, 0.4), inset 0 -1px 3px rgba(0, 0, 0, 0.2), 0 0 12px rgba(205, 212, 0, 0.4);
 }
 
-/* Fluid-like blue gradients */
+/* Fluid-like blue/yellow gradients */
 .participation-fill {
-    background: linear-gradient(90deg, #001e47 0%, #CDD400 100%);
+    background: linear-gradient(90deg, #001e47 0%, #43bff5 60%, #CDD400 100%);
 }
 
 .approval-fill {
-    background: linear-gradient(90deg, #001e47 0%, #CDD400 100%);
+    background: linear-gradient(90deg, #001e47 0%, #7fb5d8 60%, #CDD400 100%);
 }
 
 /* Texts and Gradients */
 .text-gradient-sky {
-    background: linear-gradient(90deg, #7fb5d8 0%, #43bff5 100%);
+    background: linear-gradient(90deg, #7fb5d8 0%, #43bff5 60%, #CDD400 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
+
+.text-accent-lime {
+    color: #CDD400;
+}
+
+/* Badges para Trazabilidad & Recurrencia */
+.badge-risk {
+    background-color: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+
+.badge-warning {
+    background-color: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #fde047;
+}
+
+.badge-success {
+    background-color: rgba(34, 197, 94, 0.2);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #86efac;
+}
+
+/* Forzar contraste legible en el buscador de colaboradores */
+#historico-search-colab {
+    background-color: #001e47 !important;
+    color: #ffffff !important;
+}
+
+#historico-search-colab::placeholder {
+    color: #94a3b8 !important;
+}
+
+/* Tarjeta Histórica de Capacitaciones con Fondo Completo */
+.historico-card {
+    position: relative;
+    overflow: hidden;
+    background-color: #001e47;
+    border: 1px solid rgba(205, 212, 0, 0.35);
+    border-top: 1px solid rgba(127, 181, 216, 0.45);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    box-shadow: 0 10px 25px rgba(0, 30, 71, 0.5);
+}
+
+.historico-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(205, 212, 0, 0.7);
+    box-shadow: 0 14px 35px rgba(205, 212, 0, 0.25), 0 0 20px rgba(67, 191, 245, 0.35);
+}
+
+/* Imagen de portada ocupando TODO el fondo de la tarjeta */
+.card-full-bg {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-size: cover;
+    background-position: center;
+    filter: blur(3px);
+    opacity: 0.52;
+    transition: transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.6s ease;
+}
+
+.historico-card:hover .card-full-bg {
+    transform: scale(1.06);
+    opacity: 0.68;
+}
+
+/* Superposición de degradado oscuro translúcido para legibilidad perfecta */
+.card-full-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: linear-gradient(180deg, rgba(0, 24, 56, 0.68) 0%, rgba(0, 30, 71, 0.82) 45%, rgba(0, 18, 43, 0.94) 100%);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+/* Sub-panel por Área dentro de Tarjetas */
+.area-breakdown-box {
+    position: relative;
+    z-index: 2;
+    background: rgba(0, 24, 56, 0.65);
+    border: 1px solid rgba(205, 212, 0, 0.25);
+    border-radius: 10px;
+    transition: all 0.2s ease;
+}
+
+.area-breakdown-box:hover {
+    border-color: rgba(205, 212, 0, 0.55);
+    background: rgba(0, 30, 71, 0.85);
+}
+
+/* Pestañas del Modal Histórico */
+.historico-tab {
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+.historico-tab.active {
+    color: #CDD400;
+    border-bottom: 2px solid #CDD400;
+    text-shadow: 0 0 10px rgba(205, 212, 0, 0.4);
+}
+
+
